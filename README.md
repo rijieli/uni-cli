@@ -1,4 +1,4 @@
-# slim-mcp
+# uni-cli
 
 > Not sure how to use it? Ask your coding agent to help.
 
@@ -8,27 +8,27 @@ Minimal command-line client for remote MCP servers, with presets for
 ## Build
 
 ```sh
-go build -o slim-mcp .
+go build -o uni-cli .
 ```
 
 ## Usage
 
 ```sh
-slim-mcp <service> <command>
+uni-cli <service> <command>
 
-slim-mcp linear login                  # OAuth in the browser (--read for read-only)
-slim-mcp linear status                 # login state and token expiry
-slim-mcp linear issues '{"limit": 20}' # one line per issue
-slim-mcp notion search "roadmap"       # one line per result
-slim-mcp notion tools                  # list MCP tools
-slim-mcp notion schema <tool>          # show a tool's input schema
-slim-mcp notion call <tool> '{...}'    # call any tool
-slim-mcp linear workflow               # standard workflow for coding agents
+uni-cli linear login                  # OAuth in the browser (--read for read-only)
+uni-cli linear status                 # login state and token expiry
+uni-cli linear issues '{"limit": 20}' # one line per issue
+uni-cli notion search "roadmap"       # one line per result
+uni-cli notion tools                  # list MCP tools
+uni-cli notion schema <tool>          # show a tool's input schema
+uni-cli notion call <tool> '{...}'    # call any tool
+uni-cli linear workflow               # standard workflow for coding agents
 ```
 
-A binary named `linear-cli` or `notion-cli` (copy or symlink) acts as `slim-mcp linear` or `slim-mcp notion`.
+A binary named `linear-cli` or `notion-cli` (copy or symlink) acts as `uni-cli linear` or `uni-cli notion`.
 
-Run `slim-mcp --help` for all commands and flags.
+Run `uni-cli --help` for all commands and flags.
 
 ## Config
 
@@ -36,4 +36,4 @@ Run `slim-mcp --help` for all commands and flags.
 Set `LINEAR_API_KEY` to use an API key instead of OAuth for Linear; Notion is OAuth only.
 
 Any other remote MCP server: write `{"endpoint": "https://..."}` to `<name>.json`
-next to the binary, then run `slim-mcp <name> login`.
+next to the binary, then run `uni-cli <name> login`.

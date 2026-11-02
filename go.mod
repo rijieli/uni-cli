@@ -1,4 +1,4 @@
-module slim-mcp
+module uni-cli
 
 go 1.26
 

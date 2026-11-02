@@ -144,13 +144,13 @@ func main() {
 		dir = filepath.Dir(exe)
 	}
 	root := &cobra.Command{
-		Use:     "slim-mcp <service> <command>",
+		Use:     "uni-cli <service> <command>",
 		Short:   "Minimal MCP client for Linear, Notion, or any remote MCP server",
 		Version: version,
-		Long: `slim-mcp - minimal MCP client
+		Long: `uni-cli - minimal MCP client
 
 services: the presets (linear, notion) plus every <name>.json next to the binary.
-A binary named after a preset (linear-cli, notion-cli) acts as "slim-mcp <preset>".
+A binary named after a preset (linear-cli, notion-cli) acts as "uni-cli <preset>".
 
 config (<service>.json next to the binary; holds secrets, never results):
   {
@@ -160,11 +160,11 @@ config (<service>.json next to the binary; holds secrets, never results):
     "oauth": { ... }          // oauth session, when present
   }
 LINEAR_API_KEY overrides api_key for linear. Results saved with --save go to <service>-last.json.
-Add a custom server: write {"endpoint": "..."} to <name>.json, then: slim-mcp <name> login`,
-		Example: `  slim-mcp linear issues '{"team": "ENG", "limit": 20}'
-  slim-mcp linear call save_issue '{"team": "ENG", "title": "Test"}'
-  slim-mcp notion search "roadmap"
-  slim-mcp notion call notion-fetch '{"id": "<page-url-or-id>"}'`,
+Add a custom server: write {"endpoint": "..."} to <name>.json, then: uni-cli <name> login`,
+		Example: `  uni-cli linear issues '{"team": "ENG", "limit": 20}'
+  uni-cli linear call save_issue '{"team": "ENG", "title": "Test"}'
+  uni-cli notion search "roadmap"
+  uni-cli notion call notion-fetch '{"id": "<page-url-or-id>"}'`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -312,7 +312,7 @@ func serviceCmd(c *client, name, dir string) *cobra.Command {
 			default:
 				fmt.Printf("expires:  %s (in %s)\n", o.ExpiresAt.Local().Format(time.DateTime), d)
 			}
-			fmt.Println("refresh: ", map[bool]string{true: "available", false: "none (expired session requires: slim-mcp -s " + c.svc + " login)"}[o.RefreshToken != ""])
+			fmt.Println("refresh: ", map[bool]string{true: "available", false: "none (expired session requires: uni-cli " + c.svc + " login)"}[o.RefreshToken != ""])
 			return nil
 		},
 	}, &cobra.Command{
@@ -349,7 +349,7 @@ func serviceCmd(c *client, name, dir string) *cobra.Command {
 					return printJSON(t.InputSchema)
 				}
 			}
-			return fmt.Errorf("unknown tool %q (run: slim-mcp -s %s tools)", args[0], c.svc)
+			return fmt.Errorf("unknown tool %q (run: uni-cli %s tools)", args[0], c.svc)
 		},
 	}, &cobra.Command{
 		Use:   "workflow",
@@ -443,7 +443,7 @@ func (c *client) token() (string, error) {
 	}
 	o := c.cfg.OAuth
 	if o == nil || o.AccessToken == "" {
-		return "", fmt.Errorf("not logged in; run: slim-mcp %s login", c.svc)
+		return "", fmt.Errorf("not logged in; run: uni-cli %s login", c.svc)
 	}
 	if !o.ExpiresAt.IsZero() && time.Now().After(o.ExpiresAt.Add(-time.Minute)) {
 		if err := c.refresh(); err != nil {
@@ -500,7 +500,7 @@ func (c *client) login(noBrowser bool) error {
 		default:
 			codeCh <- qq.Get("code")
 		}
-		fmt.Fprintln(w, "slim-mcp authorized. You can close this tab.")
+		fmt.Fprintln(w, "uni-cli authorized. You can close this tab.")
 	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -553,7 +553,7 @@ func (c *client) login(noBrowser bool) error {
 func (c *client) refresh() error {
 	o := c.cfg.OAuth
 	if o == nil || o.RefreshToken == "" {
-		return fmt.Errorf("not logged in; run: slim-mcp %s login", c.svc)
+		return fmt.Errorf("not logged in; run: uni-cli %s login", c.svc)
 	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -564,7 +564,7 @@ func (c *client) refresh() error {
 		form.Set("resource", o.Resource)
 	}
 	if err := c.exchange(o, form); err != nil {
-		return fmt.Errorf("refresh: %w (run: slim-mcp %s login)", err, c.svc)
+		return fmt.Errorf("refresh: %w (run: uni-cli %s login)", err, c.svc)
 	}
 	return saveConfig(c.path, c.cfg)
 }
@@ -660,7 +660,7 @@ func (c *client) discover() (*asMeta, string, error) {
 
 func (c *client) register(regURL, redirect string) (string, string, error) {
 	payload, err := json.Marshal(map[string]any{
-		"client_name":                "slim-mcp",
+		"client_name":                "uni-cli",
 		"redirect_uris":              []string{redirect},
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
@@ -714,7 +714,7 @@ func (c *client) connect() error {
 	res, err := c.rpc("initialize", map[string]any{
 		"protocolVersion": protocol,
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "slim-mcp", "version": version},
+		"clientInfo":      map[string]any{"name": "uni-cli", "version": version},
 	})
 	if err != nil {
 		return err
