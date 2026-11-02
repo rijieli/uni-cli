@@ -1,10 +1,10 @@
 # build output
-/linear-cli
-linear-cli
+/slim-mcp
+slim-mcp
+*-cli
 
 # secrets and cached results
-linear.json
-linear-last.json
+*.json
 
 .DS_Store
 dist/

@@ -6,15 +6,15 @@ Projects can extend it with their own steps (design, testing, commit format).
 ## 0. Check the session
 
 ```sh
-linear-cli status
+slim-mcp linear status
 ```
 
-If not logged in, or expired with no refresh token, ask the user to run `linear-cli login`.
+If not logged in, or expired with no refresh token, ask the user to run `slim-mcp linear login`.
 
 ## 1. Pick an issue
 
 ```sh
-linear-cli issues --json '{"parentId": "<PARENT-ID>", "assignee": "<name>", "limit": 50}'
+slim-mcp linear issues --json '{"parentId": "<PARENT-ID>", "assignee": "<name>", "limit": 50}'
 ```
 
 - Sort open issues by priority: Urgent > High > Medium > Low > No priority.
@@ -22,14 +22,14 @@ linear-cli issues --json '{"parentId": "<PARENT-ID>", "assignee": "<name>", "lim
 - When work starts, mark it In Progress:
 
 ```sh
-linear-cli call save_issue '{"id": "<ISSUE-ID>", "state": "In Progress"}'
+slim-mcp linear call save_issue '{"id": "<ISSUE-ID>", "state": "In Progress"}'
 ```
 
 ## 2. Read the whole issue
 
 ```sh
-linear-cli call get_issue '{"id": "<ISSUE-ID>"}'
-linear-cli call list_comments '{"issueId": "<ISSUE-ID>"}'
+slim-mcp linear call get_issue '{"id": "<ISSUE-ID>"}'
+slim-mcp linear call list_comments '{"issueId": "<ISSUE-ID>"}'
 ```
 
 - Comments often hold extra requirements and links.
@@ -49,7 +49,7 @@ Keep changes narrow, and verify them the way the project expects.
 ## 5. Update the status
 
 ```sh
-linear-cli call save_issue '{"id": "<ISSUE-ID>", "state": "In Review"}'
+slim-mcp linear call save_issue '{"id": "<ISSUE-ID>", "state": "In Review"}'
 ```
 
 If the change still needs testing you couldn't do, say so and let the user choose the state.

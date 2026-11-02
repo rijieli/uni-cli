@@ -5,13 +5,14 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/rand"
-	_ "embed"
 	"crypto/sha256"
+	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,14 +31,31 @@ import (
 // version is set at build time: -ldflags "-X main.version=v1.2.3".
 var version = "dev"
 
-//go:embed workflow.md
-var workflow string
+//go:embed workflows
+var workflows embed.FS
 
-const (
-	configName = "linear.json"
-	lastName   = "linear-last.json"
-	protocol   = "2025-03-26"
-)
+const protocol = "2025-03-26"
+
+// preset holds a known service's defaults; any other service needs "endpoint" in its config.
+type preset struct {
+	endpoint  string
+	apiKeyEnv string // env var overriding api_key; empty: oauth only
+	readScope string // scope requested by login --read; empty: unsupported
+	shortcut  shortcut
+}
+
+// shortcut is a service command calling one tool with a one-line-per-item listing.
+type shortcut struct {
+	use, short, tool string
+	query            bool // a non-object argument is sent as {"query": arg}
+}
+
+var presets = map[string]preset{
+	"linear": {endpoint: "https://mcp.linear.app/mcp", apiKeyEnv: "LINEAR_API_KEY", readScope: "read",
+		shortcut: shortcut{"issues [json-args]", "Call list_issues; one line per issue", "list_issues", false}},
+	"notion": {endpoint: "https://mcp.notion.com/mcp",
+		shortcut: shortcut{"search <query | json-args>", "Call notion-search; one line per result", "notion-search", true}},
+}
 
 type config struct {
 	Endpoint string      `json:"endpoint"`
@@ -105,6 +124,7 @@ type toolResult struct {
 }
 
 type client struct {
+	svc   string
 	cfg   *config
 	path  string
 	http  *http.Client
@@ -119,31 +139,71 @@ func main() {
 		version = bi.Main.Version // go install module@vX.Y.Z
 	}
 	c := &client{http: &http.Client{}}
+	dir := "."
+	if exe, err := os.Executable(); err == nil {
+		dir = filepath.Dir(exe)
+	}
 	root := &cobra.Command{
-		Use:     "linear-cli",
-		Short:   "Minimal Linear MCP client",
+		Use:     "slim-mcp <service> <command>",
+		Short:   "Minimal MCP client for Linear, Notion, or any remote MCP server",
 		Version: version,
-		Long: `linear-cli - minimal Linear MCP client
+		Long: `slim-mcp - minimal MCP client
 
-config (linear.json next to the binary; holds secrets, never results):
+services: the presets (linear, notion) plus every <name>.json next to the binary.
+A binary named after a preset (linear-cli, notion-cli) acts as "slim-mcp <preset>".
+
+config (<service>.json next to the binary; holds secrets, never results):
   {
-    "endpoint": "https://mcp.linear.app/mcp",
+    "endpoint": "https://mcp.example.com/mcp",   // optional for presets
     "api_key": "",            // optional; when set it wins over oauth
     "scope": "",              // optional, e.g. "read"
     "oauth": { ... }          // oauth session, when present
   }
-LINEAR_API_KEY overrides api_key. Results saved with --save go to linear-last.json.`,
-		Example: `  linear-cli issues '{"team": "ENG", "limit": 20}'
-  linear-cli call save_issue '{"team": "ENG", "title": "Test"}'`,
+LINEAR_API_KEY overrides api_key for linear. Results saved with --save go to <service>-last.json.
+Add a custom server: write {"endpoint": "..."} to <name>.json, then: slim-mcp <name> login`,
+		Example: `  slim-mcp linear issues '{"team": "ENG", "limit": 20}'
+  slim-mcp linear call save_issue '{"team": "ENG", "title": "Test"}'
+  slim-mcp notion search "roadmap"
+  slim-mcp notion call notion-fetch '{"id": "<page-url-or-id>"}'`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) (err error) {
-			c.path = configPath()
-			c.cfg, err = loadConfig(c.path)
+	}
+	root.PersistentFlags().DurationVar(&c.http.Timeout, "timeout", 30*time.Second, "per-request network timeout")
+
+	names := map[string]bool{}
+	for name := range presets {
+		names[name] = true
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	for _, f := range files {
+		if name := strings.TrimSuffix(filepath.Base(f), ".json"); !strings.HasSuffix(name, "-last") {
+			names[name] = true
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		root.AddCommand(serviceCmd(c, name, dir))
+	}
+	if bin := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe"), "-cli"); presets[bin].endpoint != "" {
+		root.SetArgs(append([]string{bin}, os.Args[1:]...))
+	}
+
+	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+func serviceCmd(c *client, name, dir string) *cobra.Command {
+	svc := &cobra.Command{
+		Use:   name,
+		Short: "Commands for " + cmp.Or(presets[name].endpoint, name+".json"),
+		PersistentPreRunE: func(*cobra.Command, []string) (err error) {
+			c.svc = name
+			c.path = filepath.Join(dir, name+".json")
+			c.cfg, err = loadConfig(c.path, name)
 			return err
 		},
 	}
-	root.PersistentFlags().DurationVar(&c.http.Timeout, "timeout", 30*time.Second, "per-request network timeout")
 
 	var readOnly, noBrowser bool
 	login := &cobra.Command{
@@ -152,7 +212,10 @@ LINEAR_API_KEY overrides api_key. Results saved with --save go to linear-last.js
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			if readOnly {
-				c.cfg.Scope = "read"
+				if presets[c.svc].readScope == "" {
+					return fmt.Errorf("%s has no known read-only scope; set \"scope\" in %s", c.svc, c.path)
+				}
+				c.cfg.Scope = presets[c.svc].readScope
 			}
 			return c.login(noBrowser)
 		},
@@ -169,26 +232,34 @@ LINEAR_API_KEY overrides api_key. Results saved with --save go to linear-last.js
 			return runCall(c, args[0], args[1:], raw, save, false)
 		},
 	}
-	issues := &cobra.Command{
-		Use:   "issues [json-args]",
-		Short: "Call list_issues; one line per issue",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runCall(c, "list_issues", args, raw, save, !asJSON)
-		},
-	}
-	for _, cmd := range []*cobra.Command{call, issues} {
+	call.Flags().BoolVar(&raw, "raw", false, "print the raw MCP result envelope")
+	call.Flags().BoolVar(&save, "save", false, "store the result in <service>-last.json (read by: last)")
+	svc.AddCommand(call)
+	if s := presets[name].shortcut; s.tool != "" {
+		cmd := &cobra.Command{
+			Use:   s.use,
+			Short: s.short,
+			Args:  cobra.MaximumNArgs(1),
+			RunE: func(_ *cobra.Command, args []string) error {
+				if s.query && len(args) == 1 && !strings.HasPrefix(strings.TrimSpace(args[0]), "{") {
+					q, _ := json.Marshal(map[string]string{"query": args[0]})
+					args = []string{string(q)}
+				}
+				return runCall(c, s.tool, args, raw, save, !asJSON)
+			},
+		}
 		cmd.Flags().BoolVar(&raw, "raw", false, "print the raw MCP result envelope")
-		cmd.Flags().BoolVar(&save, "save", false, "store the result in linear-last.json (read by: last)")
+		cmd.Flags().BoolVar(&save, "save", false, "store the result in <service>-last.json (read by: last)")
+		cmd.Flags().BoolVar(&asJSON, "json", false, "print full JSON instead of one line per item")
+		svc.AddCommand(cmd)
 	}
-	issues.Flags().BoolVar(&asJSON, "json", false, "print full JSON instead of one line per issue")
 
 	last := &cobra.Command{
 		Use:   "last",
 		Short: "Reprint the last saved result (offline)",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			lastPath := filepath.Join(filepath.Dir(c.path), lastName)
+			lastPath := filepath.Join(filepath.Dir(c.path), c.svc+"-last.json")
 			var lc lastCall
 			b, err := os.ReadFile(lastPath)
 			if err != nil || json.Unmarshal(b, &lc) != nil {
@@ -199,7 +270,7 @@ LINEAR_API_KEY overrides api_key. Results saved with --save go to linear-last.js
 	}
 	last.Flags().BoolVar(&raw, "raw", false, "print the raw MCP result envelope")
 
-	root.AddCommand(login, call, issues, last, &cobra.Command{
+	svc.AddCommand(login, last, &cobra.Command{
 		Use:   "logout",
 		Short: "Clear the stored OAuth session",
 		Args:  cobra.NoArgs,
@@ -241,7 +312,7 @@ LINEAR_API_KEY overrides api_key. Results saved with --save go to linear-last.js
 			default:
 				fmt.Printf("expires:  %s (in %s)\n", o.ExpiresAt.Local().Format(time.DateTime), d)
 			}
-			fmt.Println("refresh: ", map[bool]string{true: "available", false: "none (expired session requires: linear-cli login)"}[o.RefreshToken != ""])
+			fmt.Println("refresh: ", map[bool]string{true: "available", false: "none (expired session requires: slim-mcp -s " + c.svc + " login)"}[o.RefreshToken != ""])
 			return nil
 		},
 	}, &cobra.Command{
@@ -278,21 +349,22 @@ LINEAR_API_KEY overrides api_key. Results saved with --save go to linear-last.js
 					return printJSON(t.InputSchema)
 				}
 			}
-			return fmt.Errorf("unknown tool %q (run: linear-cli tools)", args[0])
+			return fmt.Errorf("unknown tool %q (run: slim-mcp -s %s tools)", args[0], c.svc)
 		},
 	}, &cobra.Command{
 		Use:   "workflow",
-		Short: "Print the standard issue workflow for coding agents (offline)",
+		Short: "Print the service's standard workflow for coding agents (offline)",
 		Args:  cobra.NoArgs,
-		Run: func(*cobra.Command, []string) {
-			fmt.Print(workflow)
+		RunE: func(*cobra.Command, []string) error {
+			b, err := workflows.ReadFile("workflows/" + c.svc + ".md")
+			if err != nil {
+				return fmt.Errorf("no built-in workflow for %s", c.svc)
+			}
+			fmt.Print(string(b))
+			return nil
 		},
 	})
-
-	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
+	return svc
 }
 
 func runCall(c *client, name string, args []string, raw, save, table bool) error {
@@ -323,25 +395,18 @@ func runCall(c *client, name string, args []string, raw, save, table bool) error
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(filepath.Dir(c.path), lastName), append(lc, '\n'), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(c.path), c.svc+"-last.json"), append(lc, '\n'), 0o600); err != nil {
 			return err
 		}
 	}
 	return output(res, raw, table)
 }
 
-func configPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return configName
-	}
-	return filepath.Join(filepath.Dir(exe), configName)
-}
-
-func loadConfig(path string) (*config, error) {
+func loadConfig(path, svc string) (*config, error) {
+	p := presets[svc]
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		cfg := &config{Endpoint: "https://mcp.linear.app/mcp"}
+		cfg := &config{Endpoint: p.endpoint}
 		if err := saveConfig(path, cfg); err != nil {
 			return nil, err
 		}
@@ -354,10 +419,11 @@ func loadConfig(path string) (*config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	cfg.Endpoint = cmp.Or(cfg.Endpoint, p.endpoint)
 	if cfg.Endpoint == "" {
-		cfg.Endpoint = "https://mcp.linear.app/mcp"
+		return nil, fmt.Errorf("%s: missing \"endpoint\"", path)
 	}
-	if key := os.Getenv("LINEAR_API_KEY"); key != "" {
+	if key := os.Getenv(p.apiKeyEnv); p.apiKeyEnv != "" && key != "" {
 		cfg.APIKey = key
 	}
 	return &cfg, nil
@@ -377,7 +443,7 @@ func (c *client) token() (string, error) {
 	}
 	o := c.cfg.OAuth
 	if o == nil || o.AccessToken == "" {
-		return "", errors.New("not logged in; run: linear login")
+		return "", fmt.Errorf("not logged in; run: slim-mcp %s login", c.svc)
 	}
 	if !o.ExpiresAt.IsZero() && time.Now().After(o.ExpiresAt.Add(-time.Minute)) {
 		if err := c.refresh(); err != nil {
@@ -434,7 +500,7 @@ func (c *client) login(noBrowser bool) error {
 		default:
 			codeCh <- qq.Get("code")
 		}
-		fmt.Fprintln(w, "linear-cli authorized. You can close this tab.")
+		fmt.Fprintln(w, "slim-mcp authorized. You can close this tab.")
 	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -487,7 +553,7 @@ func (c *client) login(noBrowser bool) error {
 func (c *client) refresh() error {
 	o := c.cfg.OAuth
 	if o == nil || o.RefreshToken == "" {
-		return errors.New("not logged in; run: linear login")
+		return fmt.Errorf("not logged in; run: slim-mcp %s login", c.svc)
 	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -498,7 +564,7 @@ func (c *client) refresh() error {
 		form.Set("resource", o.Resource)
 	}
 	if err := c.exchange(o, form); err != nil {
-		return fmt.Errorf("refresh: %w (run: linear login)", err)
+		return fmt.Errorf("refresh: %w (run: slim-mcp %s login)", err, c.svc)
 	}
 	return saveConfig(c.path, c.cfg)
 }
@@ -594,7 +660,7 @@ func (c *client) discover() (*asMeta, string, error) {
 
 func (c *client) register(regURL, redirect string) (string, string, error) {
 	payload, err := json.Marshal(map[string]any{
-		"client_name":                "linear-cli",
+		"client_name":                "slim-mcp",
 		"redirect_uris":              []string{redirect},
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
@@ -648,7 +714,7 @@ func (c *client) connect() error {
 	res, err := c.rpc("initialize", map[string]any{
 		"protocolVersion": protocol,
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "linear-cli", "version": version},
+		"clientInfo":      map[string]any{"name": "slim-mcp", "version": version},
 	})
 	if err != nil {
 		return err
@@ -845,10 +911,20 @@ func output(res json.RawMessage, raw, table bool) error {
 			Assignee string `json:"assignee"`
 			Title    string `json:"title"`
 		} `json:"issues"`
+		Results []struct {
+			ID        string `json:"id"`
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Title     string `json:"title"`
+		} `json:"results"`
 	}
-	if table && json.Unmarshal([]byte(text), &list) == nil && list.Issues != nil {
+	if table && json.Unmarshal([]byte(text), &list) == nil && (list.Issues != nil || list.Results != nil) {
 		for _, i := range list.Issues {
 			fmt.Printf("%-10s %-14s %-14s %s\n", i.ID, i.Status, cmp.Or(i.Assignee, "-"), i.Title)
+		}
+		for _, r := range list.Results {
+			ts := cmp.Or(r.Timestamp, "-")
+			fmt.Printf("%-36s %-10s %-10s %s\n", r.ID, cmp.Or(r.Type, "-"), ts[:min(10, len(ts))], cmp.Or(r.Title, "(untitled)"))
 		}
 		return nil
 	}

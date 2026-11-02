@@ -1,4 +1,4 @@
-module linear-cli
+module slim-mcp
 
 go 1.26
 
