@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TAP_DIR=${TAP_DIR:-"$ROOT/../homebrew-tap"}
-RELEASE_REPO=Stillmake/releases
+RELEASE_REPO=rijieli/uni-cli
 ASC_PROFILE=sm
 export ASC_PROFILE
 cd "$ROOT"
@@ -27,7 +27,7 @@ LATEST="v$LATEST"
 [[ "$LATEST" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || { echo 'No vMAJOR.MINOR.PATCH tag found.' >&2; exit 1; }
 VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((10#${BASH_REMATCH[3]} + 1))"
 TAG="v$VERSION"
-RELEASE_TAG="uni-cli-$VERSION"
+RELEASE_TAG="$TAG"
 if gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
   echo "Release $RELEASE_TAG already exists." >&2; exit 1
 fi
@@ -79,21 +79,21 @@ class UniCli < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/Stillmake/releases/releases/download/uni-cli-#{version}/uni-cli_v#{version}_darwin_arm64.tar.gz"
+      url "https://github.com/rijieli/uni-cli/releases/download/v#{version}/uni-cli_v#{version}_darwin_arm64.tar.gz"
       sha256 "$ARM_SHA"
     end
     on_intel do
-      url "https://github.com/Stillmake/releases/releases/download/uni-cli-#{version}/uni-cli_v#{version}_darwin_amd64.tar.gz"
+      url "https://github.com/rijieli/uni-cli/releases/download/v#{version}/uni-cli_v#{version}_darwin_amd64.tar.gz"
       sha256 "$INTEL_SHA"
     end
   end
   on_linux do
     on_arm do
-      url "https://github.com/Stillmake/releases/releases/download/uni-cli-#{version}/uni-cli_v#{version}_linux_arm64.tar.gz"
+      url "https://github.com/rijieli/uni-cli/releases/download/v#{version}/uni-cli_v#{version}_linux_arm64.tar.gz"
       sha256 "$LINUX_ARM_SHA"
     end
     on_intel do
-      url "https://github.com/Stillmake/releases/releases/download/uni-cli-#{version}/uni-cli_v#{version}_linux_amd64.tar.gz"
+      url "https://github.com/rijieli/uni-cli/releases/download/v#{version}/uni-cli_v#{version}_linux_amd64.tar.gz"
       sha256 "$LINUX_INTEL_SHA"
     end
   end
@@ -109,9 +109,9 @@ end
 FORMULA
 
 echo "Publishing $TAG from $(git rev-parse --short HEAD) to $RELEASE_REPO"
-gh release create "$RELEASE_TAG" "$WORK"/dist/* --repo "$RELEASE_REPO" --target main --title "uni-cli $VERSION" --notes "Source commit: $(git rev-parse HEAD)"
 git tag "$TAG"
 git push origin "$TAG"
+gh release create "$RELEASE_TAG" "$WORK"/dist/* --repo "$RELEASE_REPO" --verify-tag --title "uni-cli $VERSION" --notes "Source commit: $(git rev-parse HEAD)"
 cp "$WORK/uni-cli.rb" "$TAP_DIR/Formula/uni-cli.rb"
 git -C "$TAP_DIR" add Formula/uni-cli.rb
 git -C "$TAP_DIR" commit -m "uni-cli: $VERSION"

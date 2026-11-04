@@ -5,6 +5,14 @@
 Minimal command-line client for remote MCP servers, with presets for
 [Linear](https://linear.app/docs/mcp) and [Notion](https://developers.notion.com/docs/mcp).
 
+## Install
+
+```sh
+brew install stillmake/tap/uni-cli
+```
+
+Or download the archive for your platform from [GitHub Releases](https://github.com/rijieli/uni-cli/releases), extract it, and put `uni-cli` on your `PATH`.
+
 ## Build
 
 ```sh
