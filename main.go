@@ -153,7 +153,7 @@ func main() {
 services: the presets (linear, notion, slack) plus every <name>.json next to the binary.
 A binary named after a preset (linear-cli, notion-cli, slack-cli) acts as "uni-cli <preset>".
 
-config (<service>.json next to the binary; holds secrets, never results):
+MCP config (<service>.json next to the binary; holds secrets, never results):
   {
     "endpoint": "https://mcp.example.com/mcp",   // optional for presets
     "api_key": "",            // optional; when set it wins over oauth
@@ -161,11 +161,14 @@ config (<service>.json next to the binary; holds secrets, never results):
     "oauth": { ... }          // oauth session, when present
   }
 LINEAR_API_KEY overrides api_key for linear. Results saved with --save go to <service>-last.json.
-Add a custom server: write {"endpoint": "..."} to <name>.json, then: uni-cli <name> login`,
+Add a custom server: write {"endpoint": "..."} to <name>.json, then: uni-cli <name> login.
+Slack uses a local desktop session stored in macOS Keychain; run: uni-cli slack login`,
 		Example: `  uni-cli linear issues '{"team": "ENG", "limit": 20}'
   uni-cli linear call save_issue '{"team": "ENG", "title": "Test"}'
   uni-cli notion search "roadmap"
-  uni-cli notion call notion-fetch '{"id": "<page-url-or-id>"}'`,
+  uni-cli notion call notion-fetch '{"id": "<page-url-or-id>"}'
+  uni-cli slack login
+  uni-cli slack read '<slack-message-url>'`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

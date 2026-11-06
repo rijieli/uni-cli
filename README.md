@@ -32,7 +32,7 @@ uni-cli notion search "roadmap"       # one line per result
 uni-cli notion tools                  # list MCP tools
 uni-cli notion schema <tool>          # show a tool's input schema
 uni-cli notion call <tool> '{...}'    # call any tool
-uni-cli slack login miidii            # connect a Slack workspace on macOS
+uni-cli slack login                   # connect a Slack workspace on macOS
 uni-cli slack read <url>              # read a message and thread
 uni-cli slack search "query"          # search messages
 uni-cli slack status                  # show connected workspace
@@ -45,8 +45,11 @@ Run `uni-cli --help` for all commands and flags.
 
 ## Config
 
-`<service>.json` sits next to the binary and holds the endpoint and OAuth session.
-Set `LINEAR_API_KEY` to use an API key instead of OAuth for Linear; Notion is OAuth only.
+For MCP services, `<service>.json` sits next to the binary and holds the endpoint
+and OAuth session. Set `LINEAR_API_KEY` to use an API key instead of OAuth for
+Linear; Notion is OAuth only. For another remote MCP server, write
+`{"endpoint": "https://..."}` to `<name>.json` next to the binary, then run
+`uni-cli <name> login`. Slack stores its session in macOS Keychain instead.
 
 ## Slack setup (macOS, experimental)
 
@@ -54,23 +57,25 @@ If Slack is signed into your workspace on this Mac, uni-cli can read the desktop
 session directly:
 
 ```sh
-uni-cli slack login <workspace-subdomain>
+uni-cli slack login
 uni-cli slack read 'https://workspace.slack.com/archives/.../p...'
 uni-cli slack search 'search terms'
 ```
 
-For example, use `miidii` for `miidii.slack.com`. Login reads the Slack desktop
-database and its cookie-encryption key from macOS Keychain, and saves the selected
+Login selects your signed-in workspace, or prompts you to choose if there are
+several. You can also provide a workspace subdomain as an optional argument.
+Login reads the Slack desktop database and its cookie-encryption key from macOS
+Keychain, and saves the selected
 workspace's session in Keychain as `uni-cli Slack desktop session`. It does not
 write a session file. If Slack is running, login asks for confirmation before
 closing it. macOS may ask you to allow Keychain access. After login,
-Slack can be reopened. `uni-cli slack logout` removes the saved copy; it
-does not revoke the Slack session.
+Slack can be reopened. `uni-cli slack status` shows the saved workspace without
+checking whether the session is still valid. `uni-cli slack logout` removes the
+saved copy; it does not revoke the original Slack session. If the session expires,
+sign in to the Slack app and run `uni-cli slack login` again.
 
 This mode uses Slack's desktop session rather than OAuth scopes. It can access
 data available to the signed-in user, relies on undocumented Slack behavior, and
 may stop working when Slack changes. Only read and search are implemented. Check
-your workspace's policies before using it.
-
-Any other remote MCP server: write `{"endpoint": "https://..."}` to `<name>.json`
-next to the binary, then run `uni-cli <name> login`.
+your workspace's policies before using it. `read` returns up to 100 messages in
+a thread, and `search` returns up to 20 results. Both print JSON.

@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -40,47 +41,59 @@ type desktopSession struct {
 }
 
 func slackDesktopCmd(c *client) *cobra.Command {
-	cmd := &cobra.Command{Use: "slack", Short: "Access Slack through a local desktop session (macOS)"}
-	cmd.AddCommand(&cobra.Command{Use: "login <workspace>", Short: "Connect a signed-in Slack desktop workspace", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "slack", Short: "Access Slack through a local desktop session (macOS)", Long: `Read and search Slack using a workspace signed in to the Slack desktop app on this Mac.
+
+Start with "uni-cli slack login". The session is stored in macOS Keychain; it has the same Slack access as your signed-in account. Run "uni-cli slack logout" to remove the saved copy.`}
+	cmd.AddCommand(&cobra.Command{Use: "login [workspace]", Short: "Connect a signed-in Slack desktop workspace", Long: `Connect a workspace signed in to the Slack desktop app on this Mac.
+
+If Slack is running, you can choose whether to close it. When more than one workspace is signed in, choose from the list. Optionally provide the workspace subdomain, for example "miidii" for miidii.slack.com.
+
+Login reads Slack's local session and may request macOS Keychain access. The selected session is saved in Keychain and has the same Slack access as your account. You can reopen Slack after login.`, Example: "  uni-cli slack login\n  uni-cli slack login miidii", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if runtime.GOOS != "darwin" {
 			return errors.New("Slack desktop login is supported on macOS only")
 		}
+		input := bufio.NewReader(cmd.InOrStdin())
+		fmt.Fprintln(cmd.OutOrStdout(), "Login reads your Slack desktop session and saves the selected workspace in macOS Keychain. The session has the same Slack access as your account.")
 		running := func() bool { return exec.Command("/usr/bin/pgrep", "-x", "Slack").Run() == nil }
-		if err := closeSlackForLogin(cmd.InOrStdin(), cmd.OutOrStdout(), running, func() error {
+		if err := closeSlackForLogin(input, cmd.OutOrStdout(), running, func() error {
 			return exec.Command("/usr/bin/pkill", "-TERM", "-x", "Slack").Run()
 		}); err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "macOS may ask you to allow Keychain access to Slack Safe Storage and to save the session.")
-		s, err := importDesktopSession(args[0])
+		workspace := ""
+		if len(args) > 0 {
+			workspace = args[0]
+		}
+		s, err := importDesktopSession(workspace, input, cmd.OutOrStdout())
 		if err != nil {
 			return err
 		}
+		fmt.Fprintln(cmd.OutOrStdout(), "macOS may ask you to allow Keychain access to save the session.")
 		if err := storeDesktopSession(s); err != nil {
 			return err
 		}
-		fmt.Printf("connected Slack desktop workspace %s; session saved in macOS Keychain\n", s.Workspace)
+		cmd.Printf("connected Slack desktop workspace %s; session saved in macOS Keychain\n", s.Workspace)
 		return nil
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "logout", Short: "Remove the desktop session from Keychain", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "logout", Short: "Remove the saved Slack session", Long: "Remove the saved Slack session from macOS Keychain. This does not sign you out of Slack or revoke the original session.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if runtime.GOOS != "darwin" {
 			return errors.New("Slack desktop sessions are supported on macOS only")
 		}
 		if err := exec.Command("/usr/bin/security", "delete-generic-password", "-s", desktopKeychainService, "-a", "uni-cli").Run(); err != nil {
 			return errors.New("could not remove desktop session from Keychain")
 		}
-		fmt.Println("desktop session removed")
+		cmd.Println("desktop session removed")
 		return nil
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "status", Short: "Show the connected Slack workspace", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "status", Short: "Show the connected Slack workspace", Long: "Show the workspace stored in macOS Keychain. This does not check whether the Slack session is still valid.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		s, err := loadDesktopSession()
 		if err != nil {
 			return err
 		}
-		fmt.Printf("workspace: %s\n", s.Workspace)
+		cmd.Printf("workspace: %s\n", s.Workspace)
 		return nil
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "read <message-url>", Short: "Read a Slack message and its thread", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "read <message-url>", Short: "Read a Slack message and its thread", Long: "Read a Slack message and up to 100 messages in its thread. Copy the message link from Slack; it must belong to the connected workspace. Results are printed as JSON.", Example: "  uni-cli slack read 'https://workspace.slack.com/archives/C123/p1234567890123456'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		workspace, channel, ts, err := parseSlackMessageURL(args[0])
 		if err != nil {
 			return err
@@ -90,16 +103,16 @@ func slackDesktopCmd(c *client) *cobra.Command {
 			return err
 		}
 		if !strings.EqualFold(workspace, s.Workspace) {
-			return fmt.Errorf("message belongs to workspace %q; connected workspace is %q", workspace, s.Workspace)
+			return fmt.Errorf("message belongs to workspace %q; connected workspace is %q (run: uni-cli slack login %s)", workspace, s.Workspace, workspace)
 		}
-		return desktopAPI(c.http, s, "conversations.replies", url.Values{"channel": {channel}, "ts": {ts}, "limit": {"100"}})
+		return desktopAPI(c.http, cmd.OutOrStdout(), s, "conversations.replies", url.Values{"channel": {channel}, "ts": {ts}, "limit": {"100"}})
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "search <query>", Short: "Search messages in the connected workspace", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "search <query>", Short: "Search messages in the connected workspace", Long: "Search messages using Slack search syntax. Returns up to 20 results as JSON.", Example: "  uni-cli slack search 'in:general roadmap'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := loadDesktopSession()
 		if err != nil {
 			return err
 		}
-		return desktopAPI(c.http, s, "search.messages", url.Values{"query": {args[0]}, "count": {"20"}})
+		return desktopAPI(c.http, cmd.OutOrStdout(), s, "search.messages", url.Values{"query": {args[0]}, "count": {"20"}})
 	}})
 	return cmd
 }
@@ -109,8 +122,8 @@ func closeSlackForLogin(in io.Reader, out io.Writer, running func() bool, stop f
 		return nil
 	}
 	fmt.Fprint(out, "Slack must close before login can read its local database. Close Slack now? [y/N] ")
-	scanner := bufio.NewScanner(in)
-	if !scanner.Scan() || !strings.EqualFold(strings.TrimSpace(scanner.Text()), "y") {
+	answer, _ := bufio.NewReader(in).ReadString('\n')
+	if !strings.EqualFold(strings.TrimSpace(answer), "y") {
 		return errors.New("login cancelled; Slack is still running")
 	}
 	if err := stop(); err != nil {
@@ -157,7 +170,7 @@ func parseSlackMessageURL(raw string) (workspace, channel, ts string, err error)
 	return workspace, parts[1], parts[2][1:11] + "." + parts[2][11:], nil
 }
 
-func desktopAPI(base *http.Client, s desktopSession, method string, form url.Values) error {
+func desktopAPI(base *http.Client, out io.Writer, s desktopSession, method string, form url.Values) error {
 	if method != "conversations.replies" && method != "search.messages" {
 		return errors.New("unsupported Slack operation")
 	}
@@ -193,9 +206,17 @@ func desktopAPI(base *http.Client, s desktopSession, method string, form url.Val
 		return err
 	}
 	if !status.OK {
+		if status.Error == "invalid_auth" || status.Error == "account_inactive" || status.Error == "token_revoked" || status.Error == "token_expired" {
+			return fmt.Errorf("Slack: %s; sign in to the Slack app and run: uni-cli slack login", status.Error)
+		}
 		return fmt.Errorf("Slack: %s", status.Error)
 	}
-	return printJSON(b)
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, b, "", "  "); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, pretty.String())
+	return err
 }
 
 func storeDesktopSession(s desktopSession) error {
@@ -223,7 +244,7 @@ func loadDesktopSession() (desktopSession, error) {
 	}
 	b, err := exec.Command("/usr/bin/security", "find-generic-password", "-s", desktopKeychainService, "-a", "uni-cli", "-w").Output()
 	if err != nil {
-		return s, errors.New("Slack session not found; run: uni-cli slack login <workspace>")
+		return s, errors.New("could not read the Slack session from macOS Keychain; allow access or run: uni-cli slack login")
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b)))
 	if err != nil {
@@ -235,10 +256,10 @@ func loadDesktopSession() (desktopSession, error) {
 	return s, nil
 }
 
-func importDesktopSession(workspace string) (desktopSession, error) {
+func importDesktopSession(workspace string, in io.Reader, out io.Writer) (desktopSession, error) {
 	var s desktopSession
 	workspace = strings.ToLower(strings.TrimSpace(workspace))
-	if workspace == "" || strings.ContainsAny(workspace, "./:") {
+	if strings.ContainsAny(workspace, "./:") {
 		return s, errors.New("provide the workspace subdomain, e.g. miidii")
 	}
 	home, err := os.UserHomeDir()
@@ -254,21 +275,20 @@ func importDesktopSession(workspace string) (desktopSession, error) {
 		}
 	}
 	if root == "" {
-		return s, errors.New("Slack desktop storage not found")
+		return s, errors.New("Slack desktop storage not found; install Slack and sign in to a workspace first")
 	}
 	db, err := leveldb.OpenFile(filepath.Join(root, "Local Storage/leveldb"), &opt.Options{ReadOnly: true})
 	if err != nil {
 		return s, fmt.Errorf("open Slack storage (ensure Slack is quit): %w", err)
 	}
 	it := db.NewIterator(nil, nil)
-	var token string
+	tokens := map[string]string{}
 	for it.Next() {
 		if !bytes.Contains(it.Key(), []byte("localConfig_v2")) {
 			continue
 		}
-		token = findWorkspaceToken(it.Value(), workspace)
-		if token != "" {
-			break
+		for name, token := range findWorkspaceTokens(it.Value()) {
+			tokens[name] = token
 		}
 	}
 	iterErr := it.Error()
@@ -277,19 +297,21 @@ func importDesktopSession(workspace string) (desktopSession, error) {
 	if iterErr != nil {
 		return s, iterErr
 	}
-	if token == "" {
-		return s, fmt.Errorf("workspace %q not found in Slack desktop storage", workspace)
+	workspace, err = selectSlackWorkspace(tokens, workspace, in, out)
+	if err != nil {
+		return s, err
 	}
+	fmt.Fprintln(out, "macOS may ask you to allow Keychain access to Slack Safe Storage.")
 	cookie, err := readSlackCookie(filepath.Join(root, "Cookies"))
 	if err != nil {
 		return s, err
 	}
-	return desktopSession{Workspace: workspace, Token: token, Cookie: cookie}, nil
+	return desktopSession{Workspace: workspace, Token: tokens[workspace], Cookie: cookie}, nil
 }
 
-func findWorkspaceToken(raw []byte, workspace string) string {
+func findWorkspaceTokens(raw []byte) map[string]string {
 	if len(raw) == 0 {
-		return ""
+		return nil
 	}
 	if raw[0] == 0 && len(raw[1:])%2 == 0 {
 		v := raw[1:]
@@ -308,15 +330,50 @@ func findWorkspaceToken(raw []byte, workspace string) string {
 		} `json:"teams"`
 	}
 	if json.Unmarshal(raw, &doc) != nil {
-		return ""
+		return nil
 	}
+	tokens := make(map[string]string)
 	for _, team := range doc.Teams {
 		u, e := url.Parse(team.URL)
-		if e == nil && strings.EqualFold(u.Hostname(), workspace+".slack.com") && strings.HasPrefix(team.Token, "xoxc-") {
-			return team.Token
+		if e == nil && u.Scheme == "https" && strings.HasPrefix(team.Token, "xoxc-") {
+			name, ok := strings.CutSuffix(strings.ToLower(u.Hostname()), ".slack.com")
+			if ok && name != "" && !strings.Contains(name, ".") {
+				tokens[name] = team.Token
+			}
 		}
 	}
-	return ""
+	return tokens
+}
+
+func selectSlackWorkspace(tokens map[string]string, requested string, in io.Reader, out io.Writer) (string, error) {
+	if requested != "" {
+		if tokens[requested] == "" {
+			return "", fmt.Errorf("workspace %q not found in Slack desktop storage", requested)
+		}
+		return requested, nil
+	}
+	names := make([]string, 0, len(tokens))
+	for name := range tokens {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "", errors.New("no signed-in workspaces found; sign in to the Slack desktop app and retry")
+	}
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	fmt.Fprintln(out, "Choose a Slack workspace:")
+	for i, name := range names {
+		fmt.Fprintf(out, "  %d. %s\n", i+1, name)
+	}
+	fmt.Fprint(out, "Workspace number: ")
+	answer, _ := bufio.NewReader(in).ReadString('\n')
+	n, err := strconv.Atoi(strings.TrimSpace(answer))
+	if err != nil || n < 1 || n > len(names) {
+		return "", errors.New("invalid workspace selection; run login again")
+	}
+	return names[n-1], nil
 }
 
 func readSlackCookie(path string) (string, error) {
