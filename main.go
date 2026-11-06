@@ -59,10 +59,12 @@ var presets = map[string]preset{
 }
 
 type config struct {
-	Endpoint string      `json:"endpoint"`
-	APIKey   string      `json:"api_key,omitempty"`
-	Scope    string      `json:"scope,omitempty"`
-	OAuth    *oauthState `json:"oauth,omitempty"`
+	Endpoint     string      `json:"endpoint"`
+	APIKey       string      `json:"api_key,omitempty"`
+	Scope        string      `json:"scope,omitempty"`
+	OAuth        *oauthState `json:"oauth,omitempty"`
+	envAPIKey    bool
+	storedAPIKey string
 }
 
 type oauthState struct {
@@ -153,7 +155,10 @@ func main() {
 services: the presets (linear, notion, slack) plus every <name>.json next to the binary.
 A binary named after a preset (linear-cli, notion-cli, slack-cli) acts as "uni-cli <preset>".
 
-MCP config (<service>.json next to the binary; holds secrets, never results):
+On macOS, Linear and Notion configuration is stored in Keychain. Existing
+linear.json and notion.json files are migrated and removed on first use.
+Custom servers (and all MCP services on other platforms) use <service>.json
+next to the binary:
   {
     "endpoint": "https://mcp.example.com/mcp",   // optional for presets
     "api_key": "",            // optional; when set it wins over oauth
@@ -192,7 +197,7 @@ Slack uses a local desktop session stored in macOS Keychain; run: uni-cli slack 
 	}
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }
@@ -283,14 +288,14 @@ func serviceCmd(c *client, name, dir string) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			if c.cfg.OAuth == nil {
-				fmt.Println("no oauth session")
+				fmt.Println("No OAuth session.")
 				return nil
 			}
 			c.cfg.OAuth = nil
 			if err := saveConfig(c.path, c.cfg); err != nil {
 				return err
 			}
-			fmt.Println("logged out")
+			fmt.Println("Logged out.")
 			return nil
 		},
 	}, &cobra.Command{
@@ -300,26 +305,26 @@ func serviceCmd(c *client, name, dir string) *cobra.Command {
 		RunE: func(*cobra.Command, []string) error {
 			cfg := c.cfg
 			if cfg.APIKey != "" {
-				fmt.Println("auth:     api key (wins over oauth)")
+				fmt.Println("Auth:     API key (wins over OAuth)")
 			}
 			o := cfg.OAuth
 			if o == nil || o.AccessToken == "" {
-				fmt.Println("oauth:    not logged in")
+				fmt.Println("OAuth:    Not logged in")
 				return nil
 			}
-			fmt.Println("oauth:    logged in")
+			fmt.Println("OAuth:    Logged in")
 			if o.Scope != "" {
-				fmt.Println("scope:   ", o.Scope)
+				fmt.Println("Scope:   ", o.Scope)
 			}
 			switch d := time.Until(o.ExpiresAt).Round(time.Second); {
 			case o.ExpiresAt.IsZero():
-				fmt.Println("expires:  never")
+				fmt.Println("Expires:  Never")
 			case d <= 0:
-				fmt.Printf("expires:  %s (expired %s ago)\n", o.ExpiresAt.Local().Format(time.DateTime), -d)
+				fmt.Printf("Expires:  %s (expired %s ago)\n", o.ExpiresAt.Local().Format(time.DateTime), -d)
 			default:
-				fmt.Printf("expires:  %s (in %s)\n", o.ExpiresAt.Local().Format(time.DateTime), d)
+				fmt.Printf("Expires:  %s (in %s)\n", o.ExpiresAt.Local().Format(time.DateTime), d)
 			}
-			fmt.Println("refresh: ", map[bool]string{true: "available", false: "none (expired session requires: uni-cli " + c.svc + " login)"}[o.RefreshToken != ""])
+			fmt.Println("Refresh: ", map[bool]string{true: "Available", false: "None (expired session requires: uni-cli " + c.svc + " login)"}[o.RefreshToken != ""])
 			return nil
 		},
 	}, &cobra.Command{
@@ -410,6 +415,9 @@ func runCall(c *client, name string, args []string, raw, save, table bool) error
 }
 
 func loadConfig(path, svc string) (*config, error) {
+	if runtime.GOOS == "darwin" && (svc == "linear" || svc == "notion") {
+		return loadKeychainConfig(path, svc, macConfigKeychain{})
+	}
 	p := presets[svc]
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -440,6 +448,10 @@ func loadConfig(path, svc string) (*config, error) {
 }
 
 func saveConfig(path string, cfg *config) error {
+	svc := strings.TrimSuffix(filepath.Base(path), ".json")
+	if runtime.GOOS == "darwin" && (svc == "linear" || svc == "notion") {
+		return saveKeychainConfig(svc, cfg, macConfigKeychain{})
+	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -522,12 +534,12 @@ func (c *client) login(noBrowser bool) error {
 	go srv.Serve(ln)
 	defer srv.Close()
 
-	fmt.Println("open this URL to authorize:")
+	fmt.Println("Open this URL to authorize:")
 	fmt.Println(authURL)
 	if !noBrowser {
 		openBrowser(authURL)
 	}
-	fmt.Println("waiting for authorization...")
+	fmt.Println("Waiting for authorization...")
 
 	var code string
 	select {
@@ -562,7 +574,7 @@ func (c *client) login(noBrowser bool) error {
 	if err := saveConfig(c.path, c.cfg); err != nil {
 		return err
 	}
-	fmt.Printf("logged in: client %s, scope %q\n", o.ClientID, o.Scope)
+	fmt.Printf("Logged in: client %s, scope %q\n", o.ClientID, o.Scope)
 	return nil
 }
 

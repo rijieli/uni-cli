@@ -45,11 +45,20 @@ Run `uni-cli --help` for all commands and flags.
 
 ## Config
 
-For MCP services, `<service>.json` sits next to the binary and holds the endpoint
-and OAuth session. Set `LINEAR_API_KEY` to use an API key instead of OAuth for
-Linear; Notion is OAuth only. For another remote MCP server, write
-`{"endpoint": "https://..."}` to `<name>.json` next to the binary, then run
-`uni-cli <name> login`. Slack stores its session in macOS Keychain instead.
+On macOS, Linear and Notion configuration and credentials are stored in macOS
+Keychain as `uni-cli MCP configuration`, with the service name as the account.
+The first time you use each service, uni-cli migrates its existing JSON config
+from beside the binary to Keychain and removes the file after verifying the copy.
+If Keychain access fails or an existing Keychain entry differs from the file,
+the file is kept and an error is shown. macOS may request Keychain access.
+
+Set `LINEAR_API_KEY` to use an API key instead of OAuth for Linear; Notion is
+OAuth only. Environment variables are not saved in Keychain. On Linux and
+Windows, Linear and Notion continue to use `<service>.json` beside the binary.
+Custom remote MCP servers use `<name>.json` on all platforms: write
+`{"endpoint": "https://..."}` there, then run `uni-cli <name> login`.
+Results explicitly stored with `--save` remain in `<service>-last.json` beside
+the binary. Slack stores its session separately in macOS Keychain.
 
 ## Slack setup (macOS, experimental)
 
@@ -73,6 +82,11 @@ Slack can be reopened. `uni-cli slack status` shows the saved workspace without
 checking whether the session is still valid. `uni-cli slack logout` removes the
 saved copy; it does not revoke the original Slack session. If the session expires,
 sign in to the Slack app and run `uni-cli slack login` again.
+
+If Slack's cookie database needs recovery after closing, login briefly creates an
+owner-only temporary copy of the database and its recovery files. SQLite recovers
+the copy, leaving Slack's original database unchanged. The copy is removed when
+login finishes.
 
 This mode uses Slack's desktop session rather than OAuth scopes. It can access
 data available to the signed-in user, relies on undocumented Slack behavior, and

@@ -111,7 +111,13 @@ FORMULA
 echo "Publishing $TAG from $(git rev-parse --short HEAD) to $RELEASE_REPO"
 git tag "$TAG"
 git push origin "$TAG"
-gh release create "$RELEASE_TAG" "$WORK"/dist/* --repo "$RELEASE_REPO" --verify-tag --title "uni-cli $VERSION" --notes "Source commit: $(git rev-parse HEAD)"
+if [ -f "$ROOT/release-notes/$TAG.md" ]; then
+  cat "$ROOT/release-notes/$TAG.md" > "$WORK/notes.md"
+  printf '\nSource commit: %s\n' "$(git rev-parse HEAD)" >> "$WORK/notes.md"
+else
+  printf 'Source commit: %s\n' "$(git rev-parse HEAD)" > "$WORK/notes.md"
+fi
+gh release create "$RELEASE_TAG" "$WORK"/dist/* --repo "$RELEASE_REPO" --verify-tag --title "uni-cli $VERSION" --notes-file "$WORK/notes.md"
 cp "$WORK/uni-cli.rb" "$TAP_DIR/Formula/uni-cli.rb"
 git -C "$TAP_DIR" add Formula/uni-cli.rb
 git -C "$TAP_DIR" commit -m "uni-cli: $VERSION"
