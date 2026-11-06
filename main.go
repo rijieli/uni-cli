@@ -55,6 +55,7 @@ var presets = map[string]preset{
 		shortcut: shortcut{"issues [json-args]", "Call list_issues; one line per issue", "list_issues", false}},
 	"notion": {endpoint: "https://mcp.notion.com/mcp",
 		shortcut: shortcut{"search <query | json-args>", "Call notion-search; one line per result", "notion-search", true}},
+	"slack": {endpoint: "https://slack.com"},
 }
 
 type config struct {
@@ -145,12 +146,12 @@ func main() {
 	}
 	root := &cobra.Command{
 		Use:     "uni-cli <service> <command>",
-		Short:   "Minimal MCP client for Linear, Notion, or any remote MCP server",
+		Short:   "Minimal MCP client for Linear, Notion, Slack, or any remote MCP server",
 		Version: version,
 		Long: `uni-cli - minimal MCP client
 
-services: the presets (linear, notion) plus every <name>.json next to the binary.
-A binary named after a preset (linear-cli, notion-cli) acts as "uni-cli <preset>".
+services: the presets (linear, notion, slack) plus every <name>.json next to the binary.
+A binary named after a preset (linear-cli, notion-cli, slack-cli) acts as "uni-cli <preset>".
 
 config (<service>.json next to the binary; holds secrets, never results):
   {
@@ -194,6 +195,9 @@ Add a custom server: write {"endpoint": "..."} to <name>.json, then: uni-cli <na
 }
 
 func serviceCmd(c *client, name, dir string) *cobra.Command {
+	if name == "slack" {
+		return slackDesktopCmd(c)
+	}
 	svc := &cobra.Command{
 		Use:   name,
 		Short: "Commands for " + cmp.Or(presets[name].endpoint, name+".json"),
@@ -410,6 +414,9 @@ func loadConfig(path, svc string) (*config, error) {
 		if err := saveConfig(path, cfg); err != nil {
 			return nil, err
 		}
+		if p.apiKeyEnv != "" {
+			cfg.APIKey = os.Getenv(p.apiKeyEnv)
+		}
 		return cfg, nil
 	}
 	if err != nil {
@@ -458,9 +465,10 @@ func (c *client) login(noBrowser bool) error {
 	if err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	listenAddr := "127.0.0.1:0"
+	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return err
+		return fmt.Errorf("oauth callback listener %s: %w", listenAddr, err)
 	}
 	defer ln.Close()
 	redirect := fmt.Sprintf("http://127.0.0.1:%d/callback", ln.Addr().(*net.TCPAddr).Port)
@@ -480,8 +488,9 @@ func (c *client) login(noBrowser bool) error {
 		"code_challenge_method": {"S256"},
 		"resource":              {resource},
 	}
-	if c.cfg.Scope != "" {
-		q.Set("scope", c.cfg.Scope)
+	scope := c.cfg.Scope
+	if scope != "" {
+		q.Set("scope", scope)
 	}
 	authURL := md.AuthorizationEndpoint + "?" + q.Encode()
 
@@ -491,16 +500,20 @@ func (c *client) login(noBrowser bool) error {
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		qq := r.URL.Query()
 		switch {
-		case qq.Get("error") != "":
-			errCh <- fmt.Errorf("%s: %s", qq.Get("error"), qq.Get("error_description"))
 		case qq.Get("state") != state:
 			errCh <- errors.New("oauth state mismatch")
+		case qq.Get("error") != "":
+			errCh <- fmt.Errorf("%s: %s", qq.Get("error"), qq.Get("error_description"))
 		case qq.Get("code") == "":
 			errCh <- errors.New("oauth callback without code")
 		default:
 			codeCh <- qq.Get("code")
 		}
-		fmt.Fprintln(w, "uni-cli authorized. You can close this tab.")
+		if qq.Get("state") != state || qq.Get("error") != "" || qq.Get("code") == "" {
+			http.Error(w, "Authorization failed. Return to uni-cli for details.", http.StatusBadRequest)
+			return
+		}
+		fmt.Fprintln(w, "Authorization received. Return to uni-cli to finish login.")
 	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -530,7 +543,7 @@ func (c *client) login(noBrowser bool) error {
 		ClientSecret:          clientSecret,
 		RedirectURI:           redirect,
 		Resource:              resource,
-		Scope:                 c.cfg.Scope,
+		Scope:                 scope,
 	}
 	if err := c.exchange(o, url.Values{
 		"grant_type":    {"authorization_code"},
@@ -583,6 +596,7 @@ func (c *client) exchange(o *oauthState, form url.Values) error {
 		return fmt.Errorf("token: http %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	var tok struct {
+		Error        string `json:"error"`
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
@@ -590,6 +604,9 @@ func (c *client) exchange(o *oauthState, form url.Values) error {
 	}
 	if err := json.Unmarshal(b, &tok); err != nil {
 		return err
+	}
+	if tok.Error != "" {
+		return fmt.Errorf("token: %s", tok.Error)
 	}
 	if tok.AccessToken == "" {
 		return errors.New("token response without access_token")
@@ -957,6 +974,9 @@ func attr(header, key string) string {
 	key += "="
 	for _, part := range strings.Split(header, ",") {
 		part = strings.TrimSpace(part)
+		if len(part) >= 7 && strings.EqualFold(part[:7], "Bearer ") {
+			part = strings.TrimSpace(part[7:])
+		}
 		if strings.HasPrefix(part, key) {
 			return strings.Trim(strings.TrimPrefix(part, key), `"`)
 		}
