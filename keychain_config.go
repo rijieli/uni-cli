@@ -21,6 +21,15 @@ type configKeychain interface {
 
 type macConfigKeychain struct{}
 
+func supportsKeychainConfig(service string) bool {
+	switch service {
+	case "linear", "notion", "whimsical":
+		return true
+	default:
+		return false
+	}
+}
+
 func (macConfigKeychain) Read(service string) ([]byte, bool, error) {
 	out, err := exec.Command("/usr/bin/security", "find-generic-password", "-s", mcpConfigKeychainService, "-a", service, "-w").Output()
 	if err != nil {
@@ -38,7 +47,7 @@ func (macConfigKeychain) Read(service string) ([]byte, bool, error) {
 }
 
 func (k macConfigKeychain) Write(service string, data []byte) error {
-	if service != "linear" && service != "notion" {
+	if !supportsKeychainConfig(service) {
 		return errors.New("unsupported Keychain service")
 	}
 	value := base64.StdEncoding.EncodeToString(data)

@@ -55,6 +55,8 @@ var presets = map[string]preset{
 		shortcut: shortcut{"issues [json-args]", "Call list_issues; one line per issue", "list_issues", false}},
 	"notion": {endpoint: "https://mcp.notion.com/mcp",
 		shortcut: shortcut{"search <query | json-args>", "Call notion-search; one line per result", "notion-search", true}},
+	"whimsical": {endpoint: "https://mcp.whimsical.com/mcp", readScope: "mcp:read",
+		shortcut: shortcut{"search <query | json-args>", "Call search; print matching Whimsical files", "search", true}},
 	"slack": {endpoint: "https://slack.com"},
 }
 
@@ -148,15 +150,16 @@ func main() {
 	}
 	root := &cobra.Command{
 		Use:     "uni-cli <service> <command>",
-		Short:   "Minimal MCP client for Linear, Notion, Slack, or any remote MCP server",
+		Short:   "Minimal MCP client for Linear, Notion, Whimsical, Slack, or any remote MCP server",
 		Version: version,
 		Long: `uni-cli - minimal MCP client
 
-services: the presets (linear, notion, slack) plus every <name>.json next to the binary.
-A binary named after a preset (linear-cli, notion-cli, slack-cli) acts as "uni-cli <preset>".
+services: the presets (linear, notion, whimsical, slack) plus every <name>.json next to the binary.
+A binary named after a preset (linear-cli, notion-cli, whimsical-cli, slack-cli) acts as "uni-cli <preset>".
 
-On macOS, Linear and Notion configuration is stored in Keychain. Existing
-linear.json and notion.json files are migrated and removed on first use.
+On macOS, Linear, Notion, and Whimsical configuration is stored in Keychain.
+Existing linear.json, notion.json, and whimsical.json files are migrated and
+removed on first use.
 Custom servers (and all MCP services on other platforms) use <service>.json
 next to the binary:
   {
@@ -172,6 +175,8 @@ Slack uses a local desktop session stored in macOS Keychain; run: uni-cli slack 
   uni-cli linear call save_issue '{"team": "ENG", "title": "Test"}'
   uni-cli notion search "roadmap"
   uni-cli notion call notion-fetch '{"id": "<page-url-or-id>"}'
+  uni-cli whimsical search "onboarding flow"
+  uni-cli whimsical call fetch '{"id": "<board-url-or-id>"}'
   uni-cli slack login
   uni-cli slack read '<slack-message-url>'`,
 		SilenceUsage:  true,
@@ -415,7 +420,7 @@ func runCall(c *client, name string, args []string, raw, save, table bool) error
 }
 
 func loadConfig(path, svc string) (*config, error) {
-	if runtime.GOOS == "darwin" && (svc == "linear" || svc == "notion") {
+	if runtime.GOOS == "darwin" && supportsKeychainConfig(svc) {
 		return loadKeychainConfig(path, svc, macConfigKeychain{})
 	}
 	p := presets[svc]
@@ -449,7 +454,7 @@ func loadConfig(path, svc string) (*config, error) {
 
 func saveConfig(path string, cfg *config) error {
 	svc := strings.TrimSuffix(filepath.Base(path), ".json")
-	if runtime.GOOS == "darwin" && (svc == "linear" || svc == "notion") {
+	if runtime.GOOS == "darwin" && supportsKeychainConfig(svc) {
 		return saveKeychainConfig(svc, cfg, macConfigKeychain{})
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")

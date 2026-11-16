@@ -3,8 +3,9 @@
 > Not sure how to use it? Ask your coding agent to help.
 
 Minimal command-line client for remote MCP servers, with presets for
-[Linear](https://linear.app/docs/mcp) and [Notion](https://developers.notion.com/docs/mcp),
-and local Slack desktop access on macOS.
+[Linear](https://linear.app/docs/mcp), [Notion](https://developers.notion.com/docs/mcp),
+and [Whimsical](https://whimsical.com/learn/integrations/mcp), plus local Slack
+desktop access on macOS.
 
 ## Install
 
@@ -32,6 +33,8 @@ uni-cli notion search "roadmap"       # one line per result
 uni-cli notion tools                  # list MCP tools
 uni-cli notion schema <tool>          # show a tool's input schema
 uni-cli notion call <tool> '{...}'    # call any tool
+uni-cli whimsical search "roadmap"    # search boards and docs
+uni-cli whimsical call <tool> '{...}' # call any Whimsical MCP tool
 uni-cli slack login                   # connect a Slack workspace on macOS
 uni-cli slack read <url>              # read a message and thread
 uni-cli slack search "query"          # search messages
@@ -39,22 +42,24 @@ uni-cli slack status                  # show connected workspace
 uni-cli linear workflow               # standard workflow for coding agents
 ```
 
-A binary named `linear-cli`, `notion-cli`, or `slack-cli` (copy or symlink) acts as `uni-cli linear`, `uni-cli notion`, or `uni-cli slack`.
+A binary named `linear-cli`, `notion-cli`, `whimsical-cli`, or `slack-cli` (copy or symlink) acts as the matching `uni-cli` service.
 
 Run `uni-cli --help` for all commands and flags.
 
 ## Config
 
-On macOS, Linear and Notion configuration and credentials are stored in macOS
-Keychain as `uni-cli MCP configuration`, with the service name as the account.
-The first time you use each service, uni-cli migrates its existing JSON config
-from beside the binary to Keychain and removes the file after verifying the copy.
-If Keychain access fails or an existing Keychain entry differs from the file,
-the file is kept and an error is shown. macOS may request Keychain access.
+On macOS, Linear, Notion, and Whimsical configuration and credentials are stored
+in macOS Keychain as `uni-cli MCP configuration`, with the service name as the
+account. The first time you use each service, uni-cli migrates its existing JSON
+config from beside the binary to Keychain and removes the file after verifying
+the copy. If Keychain access fails or an existing Keychain entry differs from the
+file, the file is kept and an error is shown. macOS may request Keychain access.
 
 Set `LINEAR_API_KEY` to use an API key instead of OAuth for Linear; Notion is
-OAuth only. Environment variables are not saved in Keychain. On Linux and
-Windows, Linear and Notion continue to use `<service>.json` beside the binary.
+OAuth only. Whimsical is OAuth only and does not currently issue refresh tokens,
+so an expired session requires `uni-cli whimsical login`. Environment variables
+are not saved in Keychain. On Linux and Windows, Linear, Notion, and Whimsical
+continue to use `<service>.json` beside the binary.
 Custom remote MCP servers use `<name>.json` on all platforms: write
 `{"endpoint": "https://..."}` there, then run `uni-cli <name> login`.
 Results explicitly stored with `--save` remain in `<service>-last.json` beside

@@ -129,3 +129,14 @@ func TestEnvKeyDoesNotPersist(t *testing.T) {
 		t.Fatalf("stored config incorrect: %v", err)
 	}
 }
+
+func TestSupportsKeychainConfig(t *testing.T) {
+	for _, service := range []string{"linear", "notion", "whimsical"} {
+		if !supportsKeychainConfig(service) {
+			t.Errorf("expected %q to use Keychain", service)
+		}
+	}
+	if supportsKeychainConfig("custom-service") {
+		t.Error("custom services must keep using JSON configuration")
+	}
+}
